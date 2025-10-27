@@ -1,30 +1,43 @@
 package com.projuktilipi.Touchme;
 
 public class GameConfig {
-    public final GameMode mode;
-    public final long roundMillis;        // used in TIME_ATTACK
-    public final boolean failOnMiss;      // ENDLESS true
-    public final boolean chill;           // CHILL true
-    public final int baseLifeMs;          // target lifetime baseline
-    public final int minRadius;           // px
-    public final int maxRadius;           // px
-    public final int baseSpawnMs;         // baseline spawn interval
+    public final int baseSpawnMs;   // base spawn interval (lower -> harder)
+    public final int baseLifeMs;    // how long a target stays alive
+    public final int minRadius;     // min target radius
+    public final int maxRadius;     // max target radius
+    public final long roundMillis;  // only used by TIME_ATTACK
+    public final boolean failOnMiss;// ENDLESS fails on a miss/expiry
+    public final boolean chill;     // disables moving targets etc.
 
-    private GameConfig(GameMode m, long round, boolean failMiss, boolean isChill,
-                       int life, int minR, int maxR, int spawn) {
-        mode = m; roundMillis = round; failOnMiss = failMiss; chill = isChill;
-        baseLifeMs = life; minRadius = minR; maxRadius = maxR; baseSpawnMs = spawn;
+    public GameConfig(int baseSpawnMs, int baseLifeMs, int minR, int maxR,
+                      long roundMillis, boolean failOnMiss, boolean chill) {
+        this.baseSpawnMs = baseSpawnMs;
+        this.baseLifeMs  = baseLifeMs;
+        this.minRadius   = minR;
+        this.maxRadius   = maxR;
+        this.roundMillis = roundMillis;
+        this.failOnMiss  = failOnMiss;
+        this.chill       = chill;
     }
 
     public static GameConfig forMode(GameMode m) {
         switch (m) {
             case ENDLESS:
-                return new GameConfig(m, 0L, true, false, 850, 34, 80, 520);
+                return new GameConfig(
+                        600, 950, 40, 80,
+                        Long.MAX_VALUE, true, false
+                );
             case CHILL:
-                return new GameConfig(m, 0L, false, true, 1200, 50, 90, 850);
+                return new GameConfig(
+                        700, 1100, 44, 90,
+                        Long.MAX_VALUE, false, true
+                );
             case TIME_ATTACK:
             default:
-                return new GameConfig(m, 60_000L, false, false, 900, 42, 80, 550);
+                return new GameConfig(
+                        550, 900, 36, 80,
+                        60_000L, false, false
+                );
         }
     }
 }

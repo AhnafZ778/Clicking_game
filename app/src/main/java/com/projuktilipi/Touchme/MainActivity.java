@@ -90,15 +90,16 @@ public class MainActivity extends AppCompatActivity {
 
         // --- game view (create FIRST, then configure) ---
         gameView = new GameView(this, new GameView.GameEvents() {
-            @Override public void onHit() {
+            @Override public void onHit(int points, int streak, boolean fever) {
                 if(!running || paused) return;
-                score++;
+                score += points;
                 if (score_text != null) score_text.setText("Score: " + score);
                 gameView.setScoreForDifficulty(score);
                 if(score > best) {
                     best = score;
                     if (high_text != null) high_text.setText("Best: " + best);
                 }
+                // (optional) visual hint for fever; you already see it via background pulse
             }
             @Override public void onMiss() {
                 if (mode == GameMode.ENDLESS) finishGame();
@@ -106,9 +107,8 @@ public class MainActivity extends AppCompatActivity {
         });
         gameView.setConfig(GameConfig.forMode(mode));
         gameView.setHapticsEnabled(hapticsEnabled);
-        gameView.setAudioEngine(audio);      // <-- now safe
+        gameView.setAudioEngine(audio);
         game_container.addView(gameView);
-
         // --- start / pause ---
         if (start_button != null) start_button.setOnClickListener(v -> startGame());
         if (pause_button != null) pause_button.setOnClickListener(v -> {

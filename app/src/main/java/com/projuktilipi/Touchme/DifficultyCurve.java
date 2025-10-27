@@ -1,25 +1,23 @@
 package com.projuktilipi.Touchme;
 
-public final class DifficultyCurve {
-    private DifficultyCurve() {}
+/** Simple score-based difficulty scaling. Keep math cheap. */
+public class DifficultyCurve {
 
-    /** Spawn interval decreases with score (harder as score rises). */
     public static int spawnIntervalMs(int base, int score) {
-        int min = Math.max(220, base - Math.min(300, score * 4));
-        return min;
+        // -5 ms per point, clamp to 280 ms
+        int v = base - (score * 5);
+        return Math.max(280, v);
     }
 
-    /** Target life shortens slowly with score. */
-    public static int targetLifeMs(int baseLife, int score) {
-        int min = Math.max(450, baseLife - Math.min(350, score * 3));
-        return min;
+    public static int targetLifeMs(int base, int score) {
+        // -3 ms per point, clamp to 450 ms
+        int v = base - (score * 3);
+        return Math.max(450, v);
     }
 
-    /** Radius range narrows downward slightly with score (smaller later). */
-    public static int radiusPx(int minR, int maxR, int score) {
-        int shrink = Math.min(12, score / 8);
-        return clamp(minR - shrink, 30, maxR);
+    public static int radiusPx(int min, int max, int score) {
+        // shrink 1px every 3 points, clamp to min
+        int shrink = score / 3;
+        return Math.max(min, max - shrink);
     }
-
-    private static int clamp(int v, int lo, int hi) { return Math.max(lo, Math.min(hi, v)); }
 }

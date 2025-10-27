@@ -17,7 +17,7 @@ import java.util.Random;
 public class GameView extends View {
 
     public interface GameEvents {
-        void onHit();
+        void onHit(int points, int streak, boolean fever);
         void onMiss(); // notify when a target expires (for ENDLESS mode)
     }
 
@@ -26,10 +26,13 @@ public class GameView extends View {
     private final Paint targetPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint particlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     private final Random rnd = new Random();
     private final ArrayList<Target> targets = new ArrayList<>();
     private final ArrayList<Explosion> explosions = new ArrayList<>();
+    private final ArrayList<FloatingText> floats = new ArrayList<>();
+    private final ComboMeter combo = new ComboMeter();
 
     // Timing
     private long nextSpawnAt = 0;
@@ -49,6 +52,10 @@ public class GameView extends View {
     private int scoreRef = 0; // main pushes current score to adjust difficulty
     private AudioEngine audio; // optional; set from activity
 
+    // Juice
+    private long shakeUntil = 0;
+    private float shakeMag = 0;
+
     public GameView(Context c, GameEvents e) {
         super(c);
         this.events = e;
@@ -61,11 +68,12 @@ public class GameView extends View {
     }
 
     private void init() {
-        bgPaint.setColor(Color.BLACK);
         targetPaint.setStyle(Paint.Style.FILL);
         ringPaint.setStyle(Paint.Style.STROKE);
         ringPaint.setStrokeWidth(6f);
         particlePaint.setStyle(Paint.Style.FILL);
+        textPaint.setTextAlign(Paint.Align.CENTER);
+        textPaint.setTextSize(28f);
         setClickable(true);
         setHapticFeedbackEnabled(true);
     }
@@ -98,6 +106,7 @@ public class GameView extends View {
         nextSpawnAt += pausedDur;
         for (int i = 0; i < targets.size(); i++) targets.get(i).bornAt += pausedDur;
         for (int i = 0; i < explosions.size(); i++) explosions.get(i).bornAt += pausedDur;
+        for (int i = 0; i < floats.size(); i++) floats.get(i).bornAt += pausedDur; // harmless
         paused = false;
         post(frameTick);
     }
@@ -111,6 +120,7 @@ public class GameView extends View {
     public void reset() {
         targets.clear();
         explosions.clear();
+        floats.clear();
         invalidate();
     }
 
@@ -119,6 +129,7 @@ public class GameView extends View {
             if(!running || paused) return;
 
             long now = SystemClock.uptimeMillis();
+            combo.update(now);
 
             // Spawn
             if(now >= nextSpawnAt) {
@@ -128,11 +139,10 @@ public class GameView extends View {
                 nextSpawnAt = now + dynSpawn + jitter;
             }
 
-            // Update & cull
+            // Update & cull targets
             int life = DifficultyCurve.targetLifeMs(config.baseLifeMs, scoreRef);
             for(Iterator<Target> it = targets.iterator(); it.hasNext(); ) {
                 Target t = it.next();
-                // subtle movement
                 t.cx += t.vx; t.cy += t.vy;
                 if (t.cx < t.r) { t.cx = t.r; t.vx = -t.vx; }
                 if (t.cy < t.r) { t.cy = t.r; t.vy = -t.vy; }
@@ -141,15 +151,24 @@ public class GameView extends View {
 
                 if(now - t.bornAt >= life) {
                     it.remove();
+                    combo.onMiss();
                     if (events != null && config.failOnMiss) events.onMiss();
                     if (audio != null && config.failOnMiss) audio.playMiss();
+                    // tiny shake on miss (ENDLESS)
+                    shake(now, 5f, 100);
                 }
             }
 
-            // Explosions
+            // Explosions lifetime
             for (Iterator<Explosion> it = explosions.iterator(); it.hasNext();) {
-                Explosion e = it.next();
-                if (now - e.bornAt > 380) it.remove();
+                if (now - it.next().bornAt > 380) it.remove();
+            }
+
+            // Floating texts lifetime
+            for (Iterator<FloatingText> it = floats.iterator(); it.hasNext();) {
+                FloatingText ft = it.next();
+                long age = now - ft.bornAt;
+                if (age > ft.lifeMs) it.remove();
             }
 
             invalidate();
@@ -168,7 +187,7 @@ public class GameView extends View {
         int ring = Color.WHITE;
 
         Target t = new Target(x, y, r, color, ring, SystemClock.uptimeMillis());
-        if (!config.chill && rnd.nextFloat() < 0.15f) { // moving target sometimes
+        if (!config.chill && rnd.nextFloat() < 0.15f) {
             t.vx = rnd.nextBoolean()? 2: -2;
             t.vy = rnd.nextBoolean()? 2: -2;
         }
@@ -182,12 +201,31 @@ public class GameView extends View {
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        canvas.drawRect(0, 0, getWidth(), getHeight(), bgPaint);
 
         long now = SystemClock.uptimeMillis();
+
+        // Background: pulse during fever
+        if (combo.fever()) {
+            float s = (float) (Math.sin(now / 120.0) * 0.5 + 0.5); // 0..1
+            int r = (int)(18 + 30 * s);
+            int g = (int)(18 + 10 * s);
+            int b = (int)(26 + 60 * s);
+            bgPaint.setColor(Color.rgb(r, g, b));
+        } else {
+            bgPaint.setColor(Color.rgb(12, 13, 18));
+        }
+        canvas.drawRect(0, 0, getWidth(), getHeight(), bgPaint);
+
+        // Screen shake
+        if (now < shakeUntil) {
+            float ox = (rnd.nextFloat() - 0.5f) * 2f * shakeMag;
+            float oy = (rnd.nextFloat() - 0.5f) * 2f * shakeMag;
+            canvas.translate(ox, oy);
+        }
+
         int life = DifficultyCurve.targetLifeMs(config.baseLifeMs, scoreRef);
 
-        // Targets (spawn scale-in, ring fade)
+        // Draw targets
         for(Target t : targets) {
             float p = (float)(now - t.bornAt) / (float)life;
             if(p < 0) p = 0; if(p > 1) p = 1;
@@ -221,6 +259,12 @@ public class GameView extends View {
             }
             particlePaint.setAlpha(255);
         }
+
+        // Floating texts
+        for (int i = floats.size() - 1; i >= 0; i--) {
+            boolean alive = floats.get(i).draw(canvas, textPaint);
+            if (!alive) floats.remove(i);
+        }
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
@@ -233,25 +277,44 @@ public class GameView extends View {
                 if(dx*dx + dy*dy <= t.r * t.r) {
                     targets.remove(i);
 
+                    long now = SystemClock.uptimeMillis();
+                    boolean feverStarted = combo.onHit(now);
+                    int points = combo.pointsForHit();
+
                     if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-                    if (audio != null) audio.playTap();
-                    if (events != null) events.onHit();
+                    if (audio != null) {
+                        audio.playTap();
+                        if (feverStarted) audio.playPower();
+                    }
+                    if (events != null) events.onHit(points, combo.streak(), combo.fever());
                     spawnExplosion(t.cx, t.cy, t.color);
+                    floats.add(new FloatingText(t.cx, t.cy - t.r - 8, "+" + points,
+                            combo.fever() ? Color.YELLOW : Color.WHITE, 700));
+
+                    // juicy shake
+                    shake(now, combo.fever() ? 8f : 5f, 140);
 
                     invalidate();
                     return true;
                 }
             }
 
-            // Only play miss on empty tap when ENDLESS-style punishment is enabled
-            if (audio != null && config.failOnMiss) audio.playMiss();
+            // Empty tap -> only miss SFX in ENDLESS-like punishment
+            if (config.failOnMiss) {
+                combo.onMiss();
+                if (audio != null) audio.playMiss();
+            }
         }
         return super.onTouchEvent(event);
     }
 
+    private void shake(long now, float magnitude, long millis) {
+        shakeMag = magnitude;
+        shakeUntil = now + millis;
+    }
+
     private void spawnExplosion(float cx, float cy, int color) {
-        Explosion e = new Explosion(cx, cy, color, SystemClock.uptimeMillis());
-        explosions.add(e);
+        explosions.add(new Explosion(cx, cy, color, SystemClock.uptimeMillis()));
     }
 
     private static class Target {
