@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Root that stacks: game area, HUD, overlays, and optional ad banner -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:keepScreenOn="true"
+    android:background="@drawable/bg_gradient">
+
+    <!-- Host for the custom game view -->
+    <FrameLayout
+        android:id="@+id/game_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- HUD: Score | spacer | Mode | Time + Pause + Settings -->
+    <LinearLayout
+        android:id="@+id/hud"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:gravity="center_vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <TextView
+            android:id="@+id/score_text"
+            android:text="Score: 0"
+            android:textColor="@android:color/white"
+            android:textSize="18sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/mode_text"
+            android:text="Time Attack"
+            android:textColor="@android:color/white"
+            android:layout_marginEnd="8dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/time_text"
+            android:text="60s"
+            android:textColor="@android:color/white"
+            android:textSize="18sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <Button
+            android:id="@+id/pause_button"
+            android:text="PAUSE"
+            android:textAllCaps="true"
+            android:layout_marginStart="12dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <ImageButton
+            android:id="@+id/settings_button"
+            android:src="@drawable/ic_setting_white_24"
+            android:contentDescription="Settings"
+            android:background="@android:color/transparent"
+            android:layout_marginStart="8dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp" />
+    </LinearLayout>
+
+    <!-- Tutorial overlay shown on first launch -->
+    <LinearLayout
+        android:id="@+id/tutorial_overlay"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="#66000000"
+        android:padding="24dp"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+        <TextView
+            android:text="Tap the circles before they fade!\nScore points and chase high scores."
+            android:textColor="@android:color/white"
+            android:textSize="18sp"
+            android:gravity="center"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <Button
+            android:id="@+id/tutorial_got_it"
+            android:text="Got it"
+            android:layout_marginTop="16dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+
+    <!-- Overlay before/after a round -->
+    <LinearLayout
+        android:id="@+id/overlay"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="#66000000"
+        android:padding="20dp"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="visible">
+
+        <TextView
+            android:id="@+id/title_text"
+            android:text="TOUCH ME!"
+            android:textColor="@android:color/white"
+            android:textStyle="bold"
+            android:textSize="28sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/high_text"
+            android:text="Best: 0"
+            android:textColor="@android:color/white"
+            android:textSize="18sp"
+            android:layout_marginTop="6dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <Button
+            android:id="@+id/start_button"
+            android:text="START"
+            android:layout_marginTop="16dp"
+            android:layout_width="160dp"
+            android:layout_height="48dp" />
+    </LinearLayout>
+
+    <!-- Optional: Ad banner host at bottom -->
+    <FrameLayout
+        android:id="@+id/ad_banner_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom" />
+
+</FrameLayout>

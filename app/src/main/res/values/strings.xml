@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">TOUCH ME!</string>
+    <string name="gpgs_app_id">XXXXXXXXXX</string> <!-- TODO replace -->
+    <string name="sku_remove_ads">remove_ads</string> <!-- Billing SKU -->
+</resources>
