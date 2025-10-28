@@ -106,7 +106,7 @@ public class GameView extends View {
         nextSpawnAt += pausedDur;
         for (int i = 0; i < targets.size(); i++) targets.get(i).bornAt += pausedDur;
         for (int i = 0; i < explosions.size(); i++) explosions.get(i).bornAt += pausedDur;
-        for (int i = 0; i < floats.size(); i++) floats.get(i).bornAt += pausedDur; // harmless
+        for (int i = 0; i < floats.size(); i++) floats.get(i).shiftBorn(pausedDur);
         paused = false;
         post(frameTick);
     }
@@ -131,16 +131,19 @@ public class GameView extends View {
             long now = SystemClock.uptimeMillis();
             combo.update(now);
 
+            // scale difficulty more gently in chill modes
+            int scaled = (config.scaleDiv <= 1) ? scoreRef : (scoreRef / config.scaleDiv);
+
             // Spawn
             if(now >= nextSpawnAt) {
                 spawnTarget();
-                int dynSpawn = DifficultyCurve.spawnIntervalMs(config.baseSpawnMs, scoreRef);
+                int dynSpawn = DifficultyCurve.spawnIntervalMs(config.baseSpawnMs, scaled);
                 int jitter = 100 + rnd.nextInt(180);
                 nextSpawnAt = now + dynSpawn + jitter;
             }
 
             // Update & cull targets
-            int life = DifficultyCurve.targetLifeMs(config.baseLifeMs, scoreRef);
+            int life = DifficultyCurve.targetLifeMs(config.baseLifeMs, scaled);
             for(Iterator<Target> it = targets.iterator(); it.hasNext(); ) {
                 Target t = it.next();
                 t.cx += t.vx; t.cy += t.vy;
@@ -179,7 +182,9 @@ public class GameView extends View {
     private void spawnTarget() {
         if(widthPx == 0 || heightPx == 0) return;
 
-        int r = DifficultyCurve.radiusPx(config.minRadius, config.maxRadius, scoreRef);
+        int scaled = (config.scaleDiv <= 1) ? scoreRef : (scoreRef / config.scaleDiv);
+
+        int r = DifficultyCurve.radiusPx(config.minRadius, config.maxRadius, scaled);
         int x = r + rnd.nextInt(Math.max(1, widthPx - 2*r));
         int y = r + rnd.nextInt(Math.max(1, heightPx - 2*r));
 
@@ -223,7 +228,8 @@ public class GameView extends View {
             canvas.translate(ox, oy);
         }
 
-        int life = DifficultyCurve.targetLifeMs(config.baseLifeMs, scoreRef);
+        int scaled = (config.scaleDiv <= 1) ? scoreRef : (scoreRef / config.scaleDiv);
+        int life = DifficultyCurve.targetLifeMs(config.baseLifeMs, scaled);
 
         // Draw targets
         for(Target t : targets) {

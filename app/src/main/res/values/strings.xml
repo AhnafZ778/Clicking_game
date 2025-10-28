@@ -1,5 +1,10 @@
 <resources>
     <string name="app_name">TOUCH ME!</string>
-    <string name="gpgs_app_id">XXXXXXXXXX</string> <!-- TODO replace -->
+    <string name="game_services_project_id" translatable="false">1058039660301</string>
     <string name="sku_remove_ads">remove_ads</string> <!-- Billing SKU -->
+    <string name="lb_time_attack_id" translatable="false">CgkIxxxxxxxEAIQAQ</string>
+    <string name="lb_endless_id"     translatable="false">CgkIxxxxxxxEAIQAg</string>
+    <string name="lb_chill_id"       translatable="false">CgkIxxxxxxxEAIQAw</string>
+    <string name="ach_streak_10"     translatable="false">CgkIxxxxxxxEAIQBA</string>
+    <string name="ach_score_50"      translatable="false">CgkIxxxxxxxEAIQBQ</string>
 </resources>
