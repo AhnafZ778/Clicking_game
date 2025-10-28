@@ -133,7 +133,16 @@
             android:layout_height="48dp" />
     </LinearLayout>
 
+    <ImageButton
+        android:id="@+id/change_mode_button"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginStart="8dp"
+        android:background="@android:color/transparent"
+        android:src="@android:drawable/ic_menu_manage"
+        android:contentDescription="Change Mode"/>
     <!-- Optional: Ad banner host at bottom -->
+
     <FrameLayout
         android:id="@+id/ad_banner_container"
         android:layout_width="match_parent"

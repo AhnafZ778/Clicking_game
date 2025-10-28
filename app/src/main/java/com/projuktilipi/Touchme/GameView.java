@@ -17,8 +17,10 @@ import java.util.Random;
 public class GameView extends View {
 
     public interface GameEvents {
+        /** points gained, current streak, fever-active? */
         void onHit(int points, int streak, boolean fever);
-        void onMiss(); // notify when a target expires (for ENDLESS mode)
+        /** called when a target expires (used for HARDCORE) */
+        void onMiss();
     }
 
     // Paints
@@ -26,13 +28,10 @@ public class GameView extends View {
     private final Paint targetPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint particlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     private final Random rnd = new Random();
     private final ArrayList<Target> targets = new ArrayList<>();
     private final ArrayList<Explosion> explosions = new ArrayList<>();
-    private final ArrayList<FloatingText> floats = new ArrayList<>();
-    private final ComboMeter combo = new ComboMeter();
 
     // Timing
     private long nextSpawnAt = 0;
@@ -52,9 +51,10 @@ public class GameView extends View {
     private int scoreRef = 0; // main pushes current score to adjust difficulty
     private AudioEngine audio; // optional; set from activity
 
-    // Juice
-    private long shakeUntil = 0;
-    private float shakeMag = 0;
+    // Simple streak/fever
+    private int streak = 0;
+    private long lastHitAt = 0;
+    private boolean fever = false;
 
     public GameView(Context c, GameEvents e) {
         super(c);
@@ -68,20 +68,25 @@ public class GameView extends View {
     }
 
     private void init() {
+        bgPaint.setColor(Color.BLACK);
         targetPaint.setStyle(Paint.Style.FILL);
         ringPaint.setStyle(Paint.Style.STROKE);
         ringPaint.setStrokeWidth(6f);
         particlePaint.setStyle(Paint.Style.FILL);
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        textPaint.setTextSize(28f);
         setClickable(true);
         setHapticFeedbackEnabled(true);
     }
 
     public void setConfig(GameConfig cfg) { this.config = cfg; }
     public void setAudioEngine(AudioEngine ae) { this.audio = ae; }
-    public void setScoreForDifficulty(int score) { this.scoreRef = score; }
+    public void setScoreForDifficulty(int score) { this.scoreRef = Math.max(0, score); }
     public void setHapticsEnabled(boolean enabled) { this.hapticsEnabled = enabled; }
+
+    /** NEW: allow MainActivity to tint bg (Story mode, etc). */
+    public void setBgColor(int color) {
+        bgPaint.setColor(color);
+        invalidate();
+    }
 
     public void start() {
         running = true;
@@ -106,7 +111,6 @@ public class GameView extends View {
         nextSpawnAt += pausedDur;
         for (int i = 0; i < targets.size(); i++) targets.get(i).bornAt += pausedDur;
         for (int i = 0; i < explosions.size(); i++) explosions.get(i).bornAt += pausedDur;
-        for (int i = 0; i < floats.size(); i++) floats.get(i).shiftBorn(pausedDur);
         paused = false;
         post(frameTick);
     }
@@ -120,7 +124,8 @@ public class GameView extends View {
     public void reset() {
         targets.clear();
         explosions.clear();
-        floats.clear();
+        streak = 0;
+        fever = false;
         invalidate();
     }
 
@@ -129,23 +134,25 @@ public class GameView extends View {
             if(!running || paused) return;
 
             long now = SystemClock.uptimeMillis();
-            combo.update(now);
-
-            // scale difficulty more gently in chill modes
-            int scaled = (config.scaleDiv <= 1) ? scoreRef : (scoreRef / config.scaleDiv);
 
             // Spawn
             if(now >= nextSpawnAt) {
                 spawnTarget();
+
+                // Smoother difficulty ramp that respects scaleDiv
+                int scaled = (config.scaleDiv <= 1) ? scoreRef : (scoreRef / config.scaleDiv);
                 int dynSpawn = DifficultyCurve.spawnIntervalMs(config.baseSpawnMs, scaled);
                 int jitter = 100 + rnd.nextInt(180);
                 nextSpawnAt = now + dynSpawn + jitter;
             }
 
-            // Update & cull targets
+            // Update & cull
+            int scaled = (config.scaleDiv <= 1) ? scoreRef : (scoreRef / config.scaleDiv);
             int life = DifficultyCurve.targetLifeMs(config.baseLifeMs, scaled);
+
             for(Iterator<Target> it = targets.iterator(); it.hasNext(); ) {
                 Target t = it.next();
+                // subtle movement
                 t.cx += t.vx; t.cy += t.vy;
                 if (t.cx < t.r) { t.cx = t.r; t.vx = -t.vx; }
                 if (t.cy < t.r) { t.cy = t.r; t.vy = -t.vy; }
@@ -154,24 +161,16 @@ public class GameView extends View {
 
                 if(now - t.bornAt >= life) {
                     it.remove();
-                    combo.onMiss();
+                    // miss handling only if the mode wants it (e.g., HARDCORE)
                     if (events != null && config.failOnMiss) events.onMiss();
                     if (audio != null && config.failOnMiss) audio.playMiss();
-                    // tiny shake on miss (ENDLESS)
-                    shake(now, 5f, 100);
                 }
             }
 
             // Explosions lifetime
             for (Iterator<Explosion> it = explosions.iterator(); it.hasNext();) {
-                if (now - it.next().bornAt > 380) it.remove();
-            }
-
-            // Floating texts lifetime
-            for (Iterator<FloatingText> it = floats.iterator(); it.hasNext();) {
-                FloatingText ft = it.next();
-                long age = now - ft.bornAt;
-                if (age > ft.lifeMs) it.remove();
+                Explosion e = it.next();
+                if (now - e.bornAt > 380) it.remove();
             }
 
             invalidate();
@@ -183,8 +182,8 @@ public class GameView extends View {
         if(widthPx == 0 || heightPx == 0) return;
 
         int scaled = (config.scaleDiv <= 1) ? scoreRef : (scoreRef / config.scaleDiv);
-
         int r = DifficultyCurve.radiusPx(config.minRadius, config.maxRadius, scaled);
+
         int x = r + rnd.nextInt(Math.max(1, widthPx - 2*r));
         int y = r + rnd.nextInt(Math.max(1, heightPx - 2*r));
 
@@ -192,6 +191,7 @@ public class GameView extends View {
         int ring = Color.WHITE;
 
         Target t = new Target(x, y, r, color, ring, SystemClock.uptimeMillis());
+        // small chance of moving target (not in CHILL)
         if (!config.chill && rnd.nextFloat() < 0.15f) {
             t.vx = rnd.nextBoolean()? 2: -2;
             t.vy = rnd.nextBoolean()? 2: -2;
@@ -201,41 +201,24 @@ public class GameView extends View {
 
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        widthPx = w; heightPx = h;
+        widthPx = w;
+        heightPx = h;
     }
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-
-        long now = SystemClock.uptimeMillis();
-
-        // Background: pulse during fever
-        if (combo.fever()) {
-            float s = (float) (Math.sin(now / 120.0) * 0.5 + 0.5); // 0..1
-            int r = (int)(18 + 30 * s);
-            int g = (int)(18 + 10 * s);
-            int b = (int)(26 + 60 * s);
-            bgPaint.setColor(Color.rgb(r, g, b));
-        } else {
-            bgPaint.setColor(Color.rgb(12, 13, 18));
-        }
         canvas.drawRect(0, 0, getWidth(), getHeight(), bgPaint);
 
-        // Screen shake
-        if (now < shakeUntil) {
-            float ox = (rnd.nextFloat() - 0.5f) * 2f * shakeMag;
-            float oy = (rnd.nextFloat() - 0.5f) * 2f * shakeMag;
-            canvas.translate(ox, oy);
-        }
-
+        long now = SystemClock.uptimeMillis();
         int scaled = (config.scaleDiv <= 1) ? scoreRef : (scoreRef / config.scaleDiv);
         int life = DifficultyCurve.targetLifeMs(config.baseLifeMs, scaled);
 
-        // Draw targets
+        // Draw targets (with spawn scale-in + ring fade)
         for(Target t : targets) {
             float p = (float)(now - t.bornAt) / (float)life;
             if(p < 0) p = 0; if(p > 1) p = 1;
 
+            // Spawn scale-in: first 140ms
             float spawnDur = 140f;
             float spawnP = Math.min(1f, (now - t.bornAt) / spawnDur);
             float scale = 0.7f + 0.3f * spawnP;
@@ -250,7 +233,7 @@ public class GameView extends View {
             ringPaint.setAlpha(255);
         }
 
-        // Particles
+        // Draw particles
         long exNow = SystemClock.uptimeMillis();
         for (Explosion e : explosions) {
             float exP = (exNow - e.bornAt) / 380f;
@@ -265,12 +248,6 @@ public class GameView extends View {
             }
             particlePaint.setAlpha(255);
         }
-
-        // Floating texts
-        for (int i = floats.size() - 1; i >= 0; i--) {
-            boolean alive = floats.get(i).draw(canvas, textPaint);
-            if (!alive) floats.remove(i);
-        }
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
@@ -283,51 +260,43 @@ public class GameView extends View {
                 if(dx*dx + dy*dy <= t.r * t.r) {
                     targets.remove(i);
 
-                    long now = SystemClock.uptimeMillis();
-                    boolean feverStarted = combo.onHit(now);
-                    int points = combo.pointsForHit();
-
+                    // Hit feedback
                     if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-                    if (audio != null) {
-                        audio.playTap();
-                        if (feverStarted) audio.playPower();
-                    }
-                    if (events != null) events.onHit(points, combo.streak(), combo.fever());
-                    spawnExplosion(t.cx, t.cy, t.color);
-                    floats.add(new FloatingText(t.cx, t.cy - t.r - 8, "+" + points,
-                            combo.fever() ? Color.YELLOW : Color.WHITE, 700));
+                    if (audio != null) audio.playTap();
 
-                    // juicy shake
-                    shake(now, combo.fever() ? 8f : 5f, 140);
+                    // scoring: maintain streak if within 1.2s window
+                    long now = SystemClock.uptimeMillis();
+                    if (now - lastHitAt <= 1200) streak++; else streak = 1;
+                    lastHitAt = now;
+
+                    // simple fever when streak >= 10
+                    fever = streak >= 10;
+                    int points = fever ? 2 : 1;
+
+                    if (events != null) events.onHit(points, streak, fever);
+                    spawnExplosion(t.cx, t.cy, t.color);
 
                     invalidate();
                     return true;
                 }
             }
 
-            // Empty tap -> only miss SFX in ENDLESS-like punishment
-            if (config.failOnMiss) {
-                combo.onMiss();
-                if (audio != null) audio.playMiss();
-            }
+            // Optional: tap miss feedback (penalty only if config.failOnMiss)
+            if (audio != null && config.failOnMiss) audio.playMiss();
         }
         return super.onTouchEvent(event);
     }
 
-    private void shake(long now, float magnitude, long millis) {
-        shakeMag = magnitude;
-        shakeUntil = now + millis;
-    }
-
     private void spawnExplosion(float cx, float cy, int color) {
-        explosions.add(new Explosion(cx, cy, color, SystemClock.uptimeMillis()));
+        Explosion e = new Explosion(cx, cy, color, SystemClock.uptimeMillis());
+        explosions.add(e);
     }
 
     private static class Target {
         int cx, cy, r;
         int color, ringColor;
         long bornAt;
-        int vx = 0, vy = 0;
+        int vx = 0, vy = 0; // small movement
 
         Target(int x, int y, int rr, int c, int rc, long t) {
             cx = x; cy = y; r = rr; color = c; ringColor = rc; bornAt = t;
