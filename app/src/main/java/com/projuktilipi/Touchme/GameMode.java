@@ -1,8 +1,9 @@
 package com.projuktilipi.Touchme;
 
 public enum GameMode {
-    TIME_ATTACK,   // 60s round, score as much as you can
-    ENDLESS,       // one miss ends the run
-    CHILL,         // relaxed play
-    EXTRA_CHILL    // ultra relaxed (long target life, slow spawn)
+    TIME_ATTACK,
+    CHILL,
+    EXTRA_CHILL,
+    ENDLESS,   // NEW: miss does nothing, runs forever
+    HARDCORE   // NEW: miss ends the run (old endless)
 }

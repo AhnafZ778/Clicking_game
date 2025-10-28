@@ -48,6 +48,10 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
     private boolean adsRemoved = false;
     private GameMode mode = GameMode.TIME_ATTACK;
 
+    // Count Endless-mode fails to throttle ads (only show every 10th fail)
+    private int endlessFailCount = 0;                         // <— NEW
+    private static final String PREF_ENDLESS_FAILS = "endless_fail_count";
+
     // Systems
     private AudioEngine audio;
     private AdsManager ads;
@@ -87,6 +91,7 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         musicEnabled   = prefs.getBoolean("music_enabled", false);
         sfxEnabled     = prefs.getBoolean("sfx_enabled", true);
         adsRemoved     = prefs.getBoolean("ads_removed", false);
+        endlessFailCount = prefs.getInt(PREF_ENDLESS_FAILS, 0);   // <— NEW
 
         int savedModeOrdinal = prefs.getInt("mode", GameMode.TIME_ATTACK.ordinal());
         GameMode[] modesAll = GameMode.values();
@@ -98,19 +103,13 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         if (time_text != null) time_text.setText(mode == GameMode.TIME_ATTACK ? "60s" : "∞");
 
         // Audio
-        // Audio
         audio = new AudioEngine(this);
         audio.setSfxEnabled(sfxEnabled);
-
-// honor the saved preference
-        audio.setMusicEnabled(musicEnabled);
+        audio.setMusicEnabled(musicEnabled);                 // respect saved pref
         audio.prewarm();
-
-// optional: play menu music while the overlay is up
-        if (musicEnabled) {
-            audio.startMusic(R.raw.music_menu, true);   // or R.raw.music_game if you prefer
+        if (musicEnabled && overlay != null && overlay.getVisibility() == View.VISIBLE) {
+            audio.startMusic(R.raw.music_menu, true);        // play menu music on main menu
         }
-
 
         // Ads
         ads = new AdsManager();
@@ -134,12 +133,12 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
                     best = score;
                     if (high_text != null) high_text.setText("Best: " + best);
                 }
-                // Optional: achievements (guarded by IDs existing)
+                // Optional: achievements
                 maybeUnlockAchievement("ach_streak_10", streak >= 10);
                 maybeUnlockAchievement("ach_score_50", score  >= 50);
             }
             @Override public void onMiss() {
-                if (mode == GameMode.ENDLESS) finishGame();
+                if (mode == GameMode.ENDLESS) finishGame();  // counts as a "fail"
             }
         });
         gameView.setConfig(GameConfig.forMode(mode));
@@ -177,7 +176,6 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
                 .setMessage("Sign in to Google Play Games to compete on leaderboards and earn achievements?")
                 .setPositiveButton("Sign in", (d,w) -> {
                     prefs.edit().putBoolean(PREF_PGS_ASKED_ONCE, true).apply();
-                    // Interactive sign-in only when you approved
                     social.signIn(this, null);
                 })
                 .setNegativeButton("Not now", (d,w) -> {
@@ -204,11 +202,12 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
 
         gameView.reset();
         gameView.start();
-// Start (or switch) music
+
+        // Switch to game music
         if (musicEnabled) {
-            // Use your preferred track here:
-            audio.startMusic(R.raw.music_game, true);  // falls back to music_loop if you keep that name
+            audio.startMusic(R.raw.music_game, true);
         }
+
         handler.removeCallbacks(tick);
         handler.post(tick);
     }
@@ -219,7 +218,11 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         pauseStartedMs = System.currentTimeMillis();
         handler.removeCallbacks(tick);
         gameView.pause();
+
+        // When pausing gameplay, switch to menu music (so it doesn't go silent)
         audio.pauseMusic();
+        if (musicEnabled) audio.startMusic(R.raw.music_menu, true);   // <— NEW
+
         if (showDialog) showPauseDialog();
     }
 
@@ -229,7 +232,10 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         endTimeMs += pausedDur;
         paused = false;
         gameView.resume();
-        if (musicEnabled) audio.resumeMusic();
+
+        // Switch back to game music on resume (not just resume the menu track)
+        if (musicEnabled) audio.startMusic(R.raw.music_game, true);    // <— NEW
+
         handler.removeCallbacks(tick);
         handler.post(tick);
     }
@@ -256,8 +262,11 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         running = false;
         paused = false;
         gameView.stop();
-        audio.pauseMusic();
+
+        // Show menu overlay & play menu music
         if (overlay != null) overlay.setVisibility(View.VISIBLE);
+        audio.pauseMusic();
+        if (musicEnabled) audio.startMusic(R.raw.music_menu, true);    // <— NEW
 
         int savedBest = prefs.getInt("best", 0);
         if(best >= savedBest) prefs.edit().putInt("best", best).apply();
@@ -274,7 +283,21 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
             if (lbId != null) social.submitScore(this, lbId, best);
         }
 
-        if (!adsRemoved) ads.showInterstitial(this, null);
+        // === Interstitial policy ===
+        // - TIME_ATTACK / CHILL / EXTRA_CHILL: after every round (unchanged)
+        // - ENDLESS: only every 10th fail
+        boolean showInterstitial = false;
+        if (!adsRemoved) {
+            if (mode == GameMode.ENDLESS) {
+                endlessFailCount++;
+                prefs.edit().putInt(PREF_ENDLESS_FAILS, endlessFailCount).apply();
+                showInterstitial = (endlessFailCount % 10 == 0);       // <— NEW
+            } else {
+                showInterstitial = true;
+            }
+        }
+        if (showInterstitial) ads.showInterstitial(this, null);
+
         if (start_button != null) start_button.setText("RESTART");
         maybeOfferReward();
     }
@@ -289,6 +312,7 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
                         endTimeMs += 10_000L;
                         if (!running) { running = true; paused = false; handler.post(tick); }
                         if (overlay != null) overlay.setVisibility(View.GONE);
+                        if (musicEnabled) audio.startMusic(R.raw.music_game, true);
                     }))
                     .setNegativeButton("No thanks", null)
                     .show();
@@ -300,6 +324,7 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
                         score += 5;
                         if (score_text != null) score_text.setText("Score: " + score);
                         if (overlay != null) overlay.setVisibility(View.GONE);
+                        if (musicEnabled) audio.startMusic(R.raw.music_game, true);
                     }))
                     .setNegativeButton("No thanks", null)
                     .show();
@@ -312,33 +337,7 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         int pad = dp(16);
         container.setPadding(pad, pad, pad, pad);
 
-        // Row 1: quick Play Games icon (only if NOT signed in)
-        if (social != null && !social.isSignedIn()) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-
-            int iconId = getResources().getIdentifier("ic_play_games_small", "drawable", getPackageName());
-            if (iconId != 0) {
-                ImageButton signInIcon = new ImageButton(this);
-                signInIcon.setImageResource(iconId);
-                signInIcon.setBackground(null);
-                signInIcon.setContentDescription("Sign in to Play Games");
-                int size = dp(32);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(size, size);
-                lp.bottomMargin = dp(8);
-                signInIcon.setLayoutParams(lp);
-                signInIcon.setOnClickListener(v -> confirmPlayGamesSignIn());
-                row.addView(signInIcon);
-            } else {
-                Button signInBtn = new Button(this);
-                signInBtn.setText("Sign in to Play Games");
-                signInBtn.setOnClickListener(v -> confirmPlayGamesSignIn());
-                row.addView(signInBtn);
-            }
-            container.addView(row);
-        }
-
-        // Row 2: toggles
+        // Row 1: toggles
         SwitchCompat hapticSwitch = new SwitchCompat(this);
         hapticSwitch.setChecked(hapticsEnabled);
         hapticSwitch.setText("Haptics");
@@ -355,14 +354,9 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
             musicEnabled = isChecked;
             prefs.edit().putBoolean("music_enabled", isChecked).apply();
             audio.setMusicEnabled(isChecked);
-
             if (isChecked) {
-                // Start or resume appropriate track immediately
-                if (running && !paused) {
-                    audio.startMusic(R.raw.music_game, true);
-                } else {
-                    audio.startMusic(R.raw.music_menu, true);
-                }
+                // On pause screen we want menu music
+                audio.startMusic(R.raw.music_menu, true);
             } else {
                 audio.stopMusic();
             }
