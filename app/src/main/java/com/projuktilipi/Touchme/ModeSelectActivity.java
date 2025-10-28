@@ -7,6 +7,7 @@ import android.view.View;
 import android.widget.Button;
 
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 /**
@@ -21,14 +22,26 @@ import androidx.appcompat.app.AppCompatActivity;
  *  - EXTRA_MODE            : String  (used when we launch MainActivity directly)
  *  - EXTRA_SELECTED_MODE   : String  (used when we return a result to caller)
  *  - EXTRA_RETURN_RESULT   : boolean (tell this screen to return a result instead of launching)
+ *  - EXTRA_CURRENT_MODE    : String  (the caller’s current mode; enables confirmations here)
+ *
+ * Result extras:
+ *  - EXTRA_SELECTED_MODE   : String  (the picked mode)
+ *  - EXTRA_DECISION        : String  (one of DECISION_RESUME / DECISION_START_FRESH / DECISION_SWITCH)
  */
 public class ModeSelectActivity extends AppCompatActivity {
 
     public static final String EXTRA_MODE = "extra_mode";
     public static final String EXTRA_SELECTED_MODE = "extra_selected_mode";
     public static final String EXTRA_RETURN_RESULT = "extra_return_result";
+    public static final String EXTRA_CURRENT_MODE  = "extra_current_mode";
+
+    public static final String EXTRA_DECISION      = "extra_decision";
+    public static final String DECISION_RESUME     = "resume";
+    public static final String DECISION_START_FRESH= "start_fresh";
+    public static final String DECISION_SWITCH     = "switch";
 
     private SharedPreferences prefs;
+    private GameMode currentModeForConfirm; // only set when returning a result
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -40,6 +53,12 @@ public class ModeSelectActivity extends AppCompatActivity {
         final boolean returnResultOnly =
                 getIntent() != null && getIntent().getBooleanExtra(EXTRA_RETURN_RESULT, false);
 
+        if (returnResultOnly) {
+            String cur = getIntent().getStringExtra(EXTRA_CURRENT_MODE);
+            try { currentModeForConfirm = GameMode.valueOf(cur); }
+            catch (Exception e) { currentModeForConfirm = null; }
+        }
+
         Button btnTimeAttack = findViewById(R.id.btn_time_attack);
         Button btnEndless    = findViewById(R.id.btn_endless);
         Button btnHardcore   = findViewById(R.id.btn_hardcore);
@@ -47,29 +66,25 @@ public class ModeSelectActivity extends AppCompatActivity {
         Button btnStory      = findViewById(R.id.btn_story);
 
         View.OnClickListener pick = v -> {
-            GameMode mode;
+            GameMode picked;
             int id = v.getId();
-            if (id == R.id.btn_time_attack)      mode = GameMode.TIME_ATTACK;
-            else if (id == R.id.btn_endless)     mode = GameMode.ENDLESS;
-            else if (id == R.id.btn_hardcore)    mode = GameMode.HARDCORE;
-            else if (id == R.id.btn_chill)       mode = GameMode.CHILL;
-            else                                  mode = GameMode.STORY;
+            if (id == R.id.btn_time_attack)      picked = GameMode.TIME_ATTACK;
+            else if (id == R.id.btn_endless)     picked = GameMode.ENDLESS;
+            else if (id == R.id.btn_hardcore)    picked = GameMode.HARDCORE;
+            else if (id == R.id.btn_chill)       picked = GameMode.CHILL;
+            else                                  picked = GameMode.STORY;
 
-            // Persist for future launches
-            prefs.edit().putInt("mode", mode.ordinal()).apply();
+            // Persist the last choice for launcher starts
+            prefs.edit().putInt("mode", picked.ordinal()).apply();
 
             if (returnResultOnly) {
-                // Return choice to the caller (MainActivity)
-                Intent data = new Intent();
-                data.putExtra(EXTRA_SELECTED_MODE, mode.name());
-                setResult(RESULT_OK, data);
-                finish();
+                handleReturnResultFlow(picked);
             } else {
-                // Launcher path: start the game screen
+                // Launcher path: simple handoff to game, then close ourselves
                 Intent i = new Intent(ModeSelectActivity.this, MainActivity.class);
-                i.putExtra(EXTRA_MODE, mode.name());
+                i.putExtra(EXTRA_MODE, picked.name());
                 startActivity(i);
-                finish(); // IMPORTANT: finish so Back doesn’t return here
+                finish();
             }
         };
 
@@ -78,5 +93,56 @@ public class ModeSelectActivity extends AppCompatActivity {
         btnHardcore.setOnClickListener(pick);
         btnChill.setOnClickListener(pick);
         btnStory.setOnClickListener(pick);
+    }
+
+    private void handleReturnResultFlow(GameMode picked) {
+        // If caller provided a current mode, do confirmations HERE (not in MainActivity)
+        if (currentModeForConfirm != null) {
+            if (picked == currentModeForConfirm) {
+                // Same mode: resume or start fresh?
+                new AlertDialog.Builder(this)
+                        .setTitle("Same mode selected")
+                        .setMessage("Do you want to resume your paused run or start fresh?")
+                        .setPositiveButton("Start fresh", (d,w) -> {
+                            Intent data = new Intent();
+                            data.putExtra(EXTRA_SELECTED_MODE, picked.name());
+                            data.putExtra(EXTRA_DECISION, DECISION_START_FRESH);
+                            setResult(RESULT_OK, data);
+                            finish();
+                        })
+                        .setNegativeButton("Resume", (d,w) -> {
+                            Intent data = new Intent();
+                            data.putExtra(EXTRA_SELECTED_MODE, picked.name());
+                            data.putExtra(EXTRA_DECISION, DECISION_RESUME);
+                            setResult(RESULT_OK, data);
+                            finish();
+                        })
+                        .setCancelable(true)
+                        .show();
+                return;
+            } else {
+                // Different mode: confirm switch here
+                new AlertDialog.Builder(this)
+                        .setTitle("Switch mode?")
+                        .setMessage("Switching to " + picked.name() + " will end the current run.")
+                        .setPositiveButton("Switch", (d,w) -> {
+                            Intent data = new Intent();
+                            data.putExtra(EXTRA_SELECTED_MODE, picked.name());
+                            data.putExtra(EXTRA_DECISION, DECISION_SWITCH);
+                            setResult(RESULT_OK, data);
+                            finish();
+                        })
+                        .setNegativeButton("Cancel", null)
+                        .show();
+                return;
+            }
+        }
+
+        // Fallback (shouldn’t happen for returnResultOnly): just return the mode
+        Intent data = new Intent();
+        data.putExtra(EXTRA_SELECTED_MODE, picked.name());
+        data.putExtra(EXTRA_DECISION, DECISION_SWITCH);
+        setResult(RESULT_OK, data);
+        finish();
     }
 }

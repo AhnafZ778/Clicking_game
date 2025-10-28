@@ -30,7 +30,7 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
     private TextView score_text, time_text, high_text, mode_text; // mode_text optional
     private Button start_button, pause_button, tutorialGotIt;     // optional
     private ImageButton settings_button;                          // optional
-    private ImageButton changeModeButton;                         // optional, if present in layout
+    private ImageButton changeModeButton;                         // optional
 
     // ===== Game =====
     private GameView gameView;
@@ -70,55 +70,47 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
     private static final String PREF_STORY_LEVEL = "story_level";
     private int storyLevel = 1; // start at level 1
 
-    // Mode change flow
-    private GameMode modeBeforePicker = null;
+    // Keep a handle to the pause dialog so we can dismiss it before launching picker
+    private AlertDialog pauseDialog;
+
+    // Mode picker result
     private final ActivityResultLauncher<Intent> modePickerLauncher =
             registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
-                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                    String name = result.getData().getStringExtra(ModeSelectActivity.EXTRA_SELECTED_MODE);
-                    if (name != null) {
-                        GameMode picked;
-                        try { picked = GameMode.valueOf(name); }
-                        catch (IllegalArgumentException e) { picked = mode; }
+                if (result.getResultCode() != RESULT_OK || result.getData() == null) {
+                    // No choice; if we were paused, just stay paused (user can resume)
+                    return;
+                }
 
-                        final GameMode pickedMode = picked; // effectively final for lambdas
+                String selected = result.getData().getStringExtra(ModeSelectActivity.EXTRA_SELECTED_MODE);
+                String decision = result.getData().getStringExtra(ModeSelectActivity.EXTRA_DECISION);
 
-                        if (pickedMode == modeBeforePicker) {
-                            // Same mode chosen; ask to resume or restart
-                            new AlertDialog.Builder(this)
-                                    .setTitle("Same mode selected")
-                                    .setMessage("Do you want to resume your paused run or start fresh?")
-                                    .setPositiveButton("Resume", (d,w) -> resumeGame())
-                                    .setNegativeButton("Start fresh", (d,w) -> {
-                                        mode = pickedMode;
-                                        prefs.edit().putInt("mode", mode.ordinal()).apply();
-                                        if (mode_text != null) mode_text.setText(modeToLabel(mode));
-                                        startGame();
-                                    })
-                                    .setCancelable(false)
-                                    .show();
-                        } else {
-                            // Different mode selected; confirm discard of current run
-                            new AlertDialog.Builder(this)
-                                    .setTitle("Switch mode?")
-                                    .setMessage("Switching to " + modeToLabel(pickedMode) + " will end the current run.")
-                                    .setPositiveButton("Switch", (d,w) -> {
-                                        mode = pickedMode;
-                                        prefs.edit().putInt("mode", mode.ordinal()).apply();
-                                        if (mode_text != null) mode_text.setText(modeToLabel(mode));
-                                        startGame();
-                                    })
-                                    .setNegativeButton("Cancel", (d,w) -> resumeGame())
-                                    .setCancelable(false)
-                                    .show();
-                        }
-                    } else {
-                        // No selection returned; just resume
+                if (selected == null || decision == null) return;
+
+                GameMode picked;
+                try { picked = GameMode.valueOf(selected); }
+                catch (Exception e) { return; }
+
+                switch (decision) {
+                    case ModeSelectActivity.DECISION_RESUME:
+                        // Stay in current mode and resume gameplay
                         resumeGame();
-                    }
-                } else {
-                    // Cancelled; resume the current run
-                    resumeGame();
+                        break;
+
+                    case ModeSelectActivity.DECISION_START_FRESH:
+                        // Same mode, but reset to idle start screen
+                        mode = picked;
+                        prefs.edit().putInt("mode", mode.ordinal()).apply();
+                        if (mode_text != null) mode_text.setText(modeToLabel(mode));
+                        prepareIdleState();
+                        break;
+
+                    case ModeSelectActivity.DECISION_SWITCH:
+                        // Different mode chosen and confirmed; go to idle start screen
+                        mode = picked;
+                        prefs.edit().putInt("mode", mode.ordinal()).apply();
+                        if (mode_text != null) mode_text.setText(modeToLabel(mode));
+                        prepareIdleState();
+                        break;
                 }
             });
 
@@ -152,19 +144,18 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         adsRemoved     = prefs.getBoolean("ads_removed", false);
         storyLevel     = prefs.getInt(PREF_STORY_LEVEL, 1);
 
-        // Determine mode:
-        // 1) If launched from ModeSelectActivity (launcher path), EXTRA_MODE is present.
-        // 2) Otherwise, fall back to saved preference.
+        // Determine mode: if launched from ModeSelectActivity we get EXTRA_MODE; else use saved
         int savedModeOrdinal = prefs.getInt("mode", GameMode.TIME_ATTACK.ordinal());
         GameMode[] modesAll = GameMode.values();
-        mode = (savedModeOrdinal >= 0 && savedModeOrdinal < modesAll.length) ? modesAll[savedModeOrdinal] : GameMode.TIME_ATTACK;
+        mode = (savedModeOrdinal >= 0 && savedModeOrdinal < modesAll.length)
+                ? modesAll[savedModeOrdinal] : GameMode.TIME_ATTACK;
 
         String extraMode = getIntent().getStringExtra(ModeSelectActivity.EXTRA_MODE);
         if (extraMode != null) {
             try {
                 mode = GameMode.valueOf(extraMode);
                 prefs.edit().putInt("mode", mode.ordinal()).apply();
-            } catch (IllegalArgumentException ignored) { /* keep previous */ }
+            } catch (IllegalArgumentException ignored) { }
         }
 
         if (high_text != null) high_text.setText("Best: " + best);
@@ -176,7 +167,6 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         audio.setSfxEnabled(sfxEnabled);
         audio.setMusicEnabled(musicEnabled);
         audio.prewarm();
-        // Start menu music immediately (if enabled)
         if (musicEnabled) audio.startMusic(R.raw.music_menu, true);
 
         // Ads
@@ -218,13 +208,11 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
 
         // Start / pause
         if (start_button != null) start_button.setOnClickListener(v -> startGame());
-        if (pause_button != null) pause_button.setOnClickListener(v -> { if (running && !paused) pauseGame(true); });
+        if (pause_button != null) pause_button.setOnClickListener(v -> { if (running && !paused) showPauseDialog(); });
 
-        // Settings
+        // Settings & Change Mode
         if (settings_button != null) settings_button.setOnClickListener(v -> showSettings());
-
-        // Optional dedicated "Change Modes" icon
-        if (changeModeButton != null) changeModeButton.setOnClickListener(v -> confirmChangeMode());
+        if (changeModeButton != null) changeModeButton.setOnClickListener(v -> launchModePickerFromPause());
 
         // Tutorial
         if (tutorialOverlay != null && tutorialGotIt != null) {
@@ -235,8 +223,28 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
             });
         }
 
+        // If we arrived fresh to MainActivity, be on the idle start screen
+        prepareIdleState();
+
         // Ask ONCE on first launch for Play Games sign-in
         maybeAskForPlayGamesOnce();
+    }
+
+    /** Put the screen into an idle "tap START" state with menu music and overlay visible. */
+    private void prepareIdleState() {
+        running = false;
+        paused = false;
+        handler.removeCallbacks(tick);
+        if (gameView != null) {
+            gameView.stop();
+            gameView.reset();
+        }
+        score = 0;
+        if (score_text != null) score_text.setText("Score: 0");
+        if (time_text != null) time_text.setText(mode == GameMode.TIME_ATTACK ? "60s" : "∞");
+        if (overlay != null) overlay.setVisibility(View.VISIBLE);
+        if (start_button != null) start_button.setText("START");
+        if (musicEnabled) audio.startMusic(R.raw.music_menu, true);
     }
 
     /** Ask once at first launch; no auto sign-in. */
@@ -274,12 +282,10 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
             endTimeMs = Long.MAX_VALUE;
         }
 
-        // switch to gameplay music
         if (musicEnabled) audio.startMusic(R.raw.music_game, true);
 
-        // ads timers
         if (mode == GameMode.ENDLESS) {
-            lastEndlessAdAt = System.currentTimeMillis(); // start 5-min window
+            lastEndlessAdAt = System.currentTimeMillis();
         }
 
         gameView.reset();
@@ -289,17 +295,13 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         handler.post(tick);
     }
 
-    private void pauseGame(boolean showDialog) {
+    private void pauseGameInternal() {
         if (!running || paused) return;
         paused = true;
         pauseStartedMs = System.currentTimeMillis();
         handler.removeCallbacks(tick);
         gameView.pause();
-
-        // play menu music on pause
         if (musicEnabled) audio.startMusic(R.raw.music_menu, true);
-
-        if (showDialog) showPauseDialog();
     }
 
     private void resumeGame() {
@@ -308,10 +310,7 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         endTimeMs += pausedDur;
         paused = false;
         gameView.resume();
-
-        // back to game music
         if (musicEnabled) audio.startMusic(R.raw.music_game, true);
-
         handler.removeCallbacks(tick);
         handler.post(tick);
     }
@@ -336,12 +335,12 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
             if (!adsRemoved && mode == GameMode.ENDLESS) {
                 long fiveMin = 5L * 60L * 1000L;
                 if (now - lastEndlessAdAt >= fiveMin) {
-                    pauseGame(false);
+                    pauseGameInternal();
                     ads.showInterstitial(MainActivity.this, () -> {
                         lastEndlessAdAt = System.currentTimeMillis();
                         resumeGame();
                     });
-                    return; // wait for ad flow
+                    return;
                 }
             }
 
@@ -357,15 +356,12 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         running = false;
         paused  = false;
         gameView.stop();
-        // back to menu music
         if (musicEnabled) audio.startMusic(R.raw.music_menu, true);
         if (overlay != null) overlay.setVisibility(View.VISIBLE);
 
-        // Persist best
         int savedBest = prefs.getInt("best", 0);
         if(best >= savedBest) prefs.edit().putInt("best", best).apply();
 
-        // Leaderboard submit (if signed in)
         if (social != null && social.isSignedIn()) {
             String lbId;
             switch (mode) {
@@ -378,11 +374,10 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
             if (lbId != null) social.submitScore(this, lbId, best);
         }
 
-        // Ads policy
         if (!adsRemoved) {
             switch (mode) {
                 case TIME_ATTACK:
-                    ads.showInterstitial(this, null); // after each round
+                    ads.showInterstitial(this, null);
                     break;
                 case HARDCORE:
                     if (hardcoreDeathsSinceAd >= 15) {
@@ -390,16 +385,12 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
                         ads.showInterstitial(this, null);
                     }
                     break;
-                case ENDLESS:
-                case CHILL:
-                case STORY:
                 default:
-                    // Endless handled by timer; nothing here
+                    // Endless handled by timer; Chill/Story no interstitial here
                     break;
             }
         }
 
-        // Story progress placeholder
         if (mode == GameMode.STORY) {
             storyLevel = Math.max(1, storyLevel + 1);
             prefs.edit().putInt(PREF_STORY_LEVEL, storyLevel).apply();
@@ -409,8 +400,9 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
     }
 
     // ===== Menus =====
-
     private void showPauseDialog() {
+        pauseGameInternal();
+
         LinearLayout container = new LinearLayout(this);
         container.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(16);
@@ -486,10 +478,13 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         // Change Modes button
         Button changeMode = new Button(this);
         changeMode.setText("Change Mode");
-        changeMode.setOnClickListener(v -> confirmChangeMode());
+        changeMode.setOnClickListener(v -> {
+            if (pauseDialog != null) { pauseDialog.dismiss(); pauseDialog = null; }
+            launchModePickerFromPause();
+        });
         container.addView(changeMode);
 
-        new AlertDialog.Builder(this)
+        pauseDialog = new AlertDialog.Builder(this)
                 .setTitle("Paused")
                 .setView(container)
                 .setPositiveButton("Resume", (d, w) -> resumeGame())
@@ -508,20 +503,12 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
                 .show();
     }
 
-    private void confirmChangeMode() {
-        if (running && !paused) pauseGame(false);
-        new AlertDialog.Builder(this)
-                .setTitle("Change Mode")
-                .setMessage("Do you want to change the game mode? Current progress will be paused.")
-                .setPositiveButton("Yes", (d,w) -> {
-                    modeBeforePicker = mode;
-                    Intent i = new Intent(this, ModeSelectActivity.class);
-                    i.putExtra(ModeSelectActivity.EXTRA_RETURN_RESULT, true);
-                    modePickerLauncher.launch(i);
-                })
-                .setNegativeButton("No", (d,w) -> resumeGame())
-                .setCancelable(false)
-                .show();
+    /** Launch the picker in "return-result" mode with current mode info (no confirmations here). */
+    private void launchModePickerFromPause() {
+        Intent i = new Intent(this, ModeSelectActivity.class);
+        i.putExtra(ModeSelectActivity.EXTRA_RETURN_RESULT, true);
+        i.putExtra(ModeSelectActivity.EXTRA_CURRENT_MODE, mode.name());
+        modePickerLauncher.launch(i);
     }
 
     private void showSettings() {
@@ -557,7 +544,9 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
                             confirmPlayGamesSignIn();
                             break;
                         case "Change Mode":
-                            confirmChangeMode();
+                            if (pauseDialog != null) { pauseDialog.dismiss(); pauseDialog = null; }
+                            pauseGameInternal();
+                            launchModePickerFromPause();
                             break;
                     }
                 })
@@ -585,19 +574,19 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
     }
 
     // ===== Billing callbacks =====
-    @Override public void onBillingReady() { /* enable shop UI if needed */ }
+    @Override public void onBillingReady() { }
 
     @Override public void onAdsRemoved() {
         adsRemoved = true;
         prefs.edit().putBoolean("ads_removed", true).apply();
     }
 
-    @Override public void onPurchaseFailed(String reason) { /* you may toast message */ }
+    @Override public void onPurchaseFailed(String reason) { }
 
     // ===== Lifecycle =====
     @Override protected void onPause() {
         super.onPause();
-        if (running && !paused) pauseGame(false);
+        if (running && !paused) pauseGameInternal();
     }
 
     @Override protected void onDestroy() {
@@ -611,7 +600,6 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         return Math.round(v * d);
     }
 
-    /** Safe string fetch from strings.xml by name; returns null if not found. */
     private String getStringSafe(String name) {
         int id = getResources().getIdentifier(name, "string", getPackageName());
         return id == 0 ? null : getString(id);
