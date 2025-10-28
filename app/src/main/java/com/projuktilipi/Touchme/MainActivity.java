@@ -98,10 +98,19 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
         if (time_text != null) time_text.setText(mode == GameMode.TIME_ATTACK ? "60s" : "∞");
 
         // Audio
+        // Audio
         audio = new AudioEngine(this);
         audio.setSfxEnabled(sfxEnabled);
-        audio.setMusicEnabled(false);
+
+// honor the saved preference
+        audio.setMusicEnabled(musicEnabled);
         audio.prewarm();
+
+// optional: play menu music while the overlay is up
+        if (musicEnabled) {
+            audio.startMusic(R.raw.music_menu, true);   // or R.raw.music_game if you prefer
+        }
+
 
         // Ads
         ads = new AdsManager();
@@ -346,6 +355,17 @@ public class MainActivity extends AppCompatActivity implements BillingManager.Li
             musicEnabled = isChecked;
             prefs.edit().putBoolean("music_enabled", isChecked).apply();
             audio.setMusicEnabled(isChecked);
+
+            if (isChecked) {
+                // Start or resume appropriate track immediately
+                if (running && !paused) {
+                    audio.startMusic(R.raw.music_game, true);
+                } else {
+                    audio.startMusic(R.raw.music_menu, true);
+                }
+            } else {
+                audio.stopMusic();
+            }
         });
 
         SwitchCompat sfxSwitch = new SwitchCompat(this);
